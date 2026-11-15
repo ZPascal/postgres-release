@@ -56,9 +56,9 @@ for arch in "${missing[@]}"; do
 done
 
 # Drop yq entries the spec no longer references (e.g. yq/postgres-yq-<version>).
-grep -oE '^yq/[^:]+' config/blobs.yml \
-  | grep -vxF -e "yq/postgres-yq-amd64-${version}" -e "yq/postgres-yq-arm64-${version}" \
-  | while IFS= read -r stale; do
-      echo "removing unreferenced blob ${stale}"
-      bosh remove-blob "$stale"
-    done
+# (grep -v exits 1 when nothing is stale; keep that out of pipefail.)
+while IFS= read -r stale; do
+  echo "removing unreferenced blob ${stale}"
+  bosh remove-blob "$stale"
+done < <(grep -oE '^yq/[^:]+' config/blobs.yml \
+  | { grep -vxF -e "yq/postgres-yq-amd64-${version}" -e "yq/postgres-yq-arm64-${version}" || true; })

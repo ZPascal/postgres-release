@@ -61,10 +61,23 @@ test_smoke_cleans_up_on_failure() {
   pass "${FUNCNAME[0]}"
 }
 
+test_smoke_failure_prints_server_log() {
+  # Same wrong-major trick: the server log must be shown before the data dir is removed.
+  local pkgs="$WORK/pkgs"
+  [ -d "$pkgs/postgres-18" ] || { fail "${FUNCNAME[0]}" "needs postgres-18 from previous test"; return; }
+  ln -sfn "$pkgs/postgres-18" "$pkgs/postgres-17"
+  PACKAGES_DIR="$pkgs" "$SMOKE" 17 > "$WORK/serverlog.log" 2>&1
+  rm -f "$pkgs/postgres-17"
+  grep -q "database system is ready to accept connections" "$WORK/serverlog.log" \
+    || { fail "${FUNCNAME[0]}" "server log not printed on failure"; return; }
+  pass "${FUNCNAME[0]}"
+}
+
 build_release
 test_compile_without_libicu_fails
 test_compile_and_smoke_18
 test_smoke_cleans_up_on_failure
+test_smoke_failure_prints_server_log
 
 if [ "$failures" -ne 0 ]; then echo "${failures} FAILED"; exit 1; fi
 echo "ALL PASSED"

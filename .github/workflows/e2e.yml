@@ -61,6 +61,9 @@ jobs:
       run: |
         ci/e2e/prepare-yq-blobs.sh
         bosh create-release --force --tarball /tmp/postgres-release.tgz
+        # The director's blobstore can come up after its API (same wait as the CPI's e2e).
+        for _ in $(seq 1 80); do nc -z "${DIRECTOR_IP}" 25250 && break; sleep 3; done
+        nc -z "${DIRECTOR_IP}" 25250 || { echo "blobstore port 25250 never opened"; exit 1; }
         timeout 600 bosh upload-release /tmp/postgres-release.tgz
 
     - name: Deploy postgres
@@ -157,8 +160,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential pkg-config libssl-dev libreadline-dev zlib1g-dev bison flex file
         curl -fsSL "https://github.com/cloudfoundry/bosh-cli/releases/download/${BOSH_CLI_VERSION}/bosh-cli-${BOSH_CLI_VERSION#v}-linux-arm64" \
-          -o /usr/local/bin/bosh
-        chmod +x /usr/local/bin/bosh
+          -o "${RUNNER_TEMP}/bosh"
+        sudo install -m 0755 "${RUNNER_TEMP}/bosh" /usr/local/bin/bosh
         bosh --version
 
     - name: Create release tarball

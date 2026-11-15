@@ -18,7 +18,13 @@ port="${PORT:-55432}"
 dir=$(mktemp -d)
 
 cleanup() {
+  local rc=$?
   "${bin}/pg_ctl" -D "${dir}/data" -m immediate stop > /dev/null 2>&1 || true
+  if [ "$rc" -ne 0 ]; then
+    for log in initdb.log server.log; do
+      [ -f "${dir}/${log}" ] && { echo "=== ${log} ==="; cat "${dir}/${log}"; } >&2
+    done
+  fi
   rm -rf "$dir"
 }
 trap cleanup EXIT

@@ -68,8 +68,21 @@ test_checksum_mismatch_fails() {
   pass "${FUNCNAME[0]}"
 }
 
+test_adds_missing_arch_without_stale_entry() {
+  # amd64 already listed, arm64 missing, no legacy entry: nothing to remove.
+  local rel assets; rel=$(fresh_release partial); assets=$(asset_cache)
+  (cd "$rel" && YQ_ASSET_DIR="$assets" "$SCRIPT") > /dev/null 2>&1 || { fail "${FUNCNAME[0]}" "setup run failed"; return; }
+  (cd "$rel" && bosh remove-blob "yq/postgres-yq-arm64-${YQ_VERSION}") > /dev/null 2>&1
+  if ! (cd "$rel" && YQ_ASSET_DIR="$assets" "$SCRIPT") > "$WORK/partial.log" 2>&1; then
+    fail "${FUNCNAME[0]}" "script failed: $(tail -3 "$WORK/partial.log")"; return
+  fi
+  grep -q "^yq/postgres-yq-arm64-${YQ_VERSION}:" "$rel/config/blobs.yml" || { fail "${FUNCNAME[0]}" "arm64 blob not re-added"; return; }
+  pass "${FUNCNAME[0]}"
+}
+
 test_adds_both_arch_blobs
 test_noop_when_present
+test_adds_missing_arch_without_stale_entry
 test_checksum_mismatch_fails
 
 if [ "$failures" -ne 0 ]; then echo "${failures} FAILED"; exit 1; fi
