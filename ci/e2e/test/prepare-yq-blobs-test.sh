@@ -72,4 +72,5 @@ test_adds_both_arch_blobs
 test_noop_when_present
 test_checksum_mismatch_fails
 
-[ "$failures" -eq 0 ] && echo "ALL PASSED" || { echo "${failures} FAILED"; exit 1; }
+if [ "$failures" -ne 0 ]; then echo "${failures} FAILED"; exit 1; fi
+echo "ALL PASSED"

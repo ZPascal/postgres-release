@@ -1,0 +1,55 @@
+---
+# Cloud config for the e2e workflow's BOSH director on the libvirt CPI (QEMU,
+# direct kernel boot). Based on the CPI's manifests/cloud-config-qemu.yml, plus
+# the vm/disk types templates/postgres.yml needs. 192.168.122.21 is the
+# Postgres static IP; .22-.29 are left dynamic for compilation VMs.
+azs:
+- name: z1
+  cloud_properties: {}
+
+vm_types:
+- name: default
+  cloud_properties:
+    memory: 2048
+    cpus: 2
+    ephemeral_disk: 10240
+    kernel: ((kernel_path))
+- name: small
+  cloud_properties:
+    memory: 2048
+    cpus: 2
+    ephemeral_disk: 10240
+    kernel: ((kernel_path))
+- name: compilation
+  cloud_properties:
+    memory: 4096
+    cpus: 4
+    ephemeral_disk: 20480
+    kernel: ((kernel_path))
+
+disk_types:
+- name: default
+  disk_size: 5120
+  cloud_properties: {}
+- name: disk_10G
+  disk_size: 10240
+  cloud_properties: {}
+
+networks:
+- name: default
+  type: manual
+  subnets:
+  - range: 192.168.122.0/24
+    gateway: 192.168.122.1
+    dns: [8.8.8.8]
+    az: z1
+    static: [192.168.122.20-192.168.122.21]
+    reserved: [192.168.122.0, 192.168.122.1, 192.168.122.2-192.168.122.19, 192.168.122.30-192.168.122.254]
+    cloud_properties: {}
+
+compilation:
+  workers: 1
+  reuse_compilation_vms: true
+  az: z1
+  vm_type: compilation
+  network: default
