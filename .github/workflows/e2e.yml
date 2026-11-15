@@ -72,6 +72,7 @@ jobs:
         timeout 7200 bosh -n deploy templates/postgres.yml \
           -o templates/operations/add_static_ips.yml \
           -o templates/operations/set_properties.yml \
+          -o ci/e2e/ops/no-persistent-disk.yml \
           -v "postgres_host_or_ip=${POSTGRES_IP}" \
           --vars-store /tmp/postgres-vars.yml
         bosh instances --ps
