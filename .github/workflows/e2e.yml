@@ -17,8 +17,9 @@ permissions:
 
 env:
   BOSH_CLI_VERSION: v7.11.2
-  # ZPascal/bosh-libvirt-cpi-release PR #32 (adds .github/actions/setup-bosh-director).
-  CPI_REF: c89078ded6934ac1a7d026c0a93f051ba1b612f9
+  # ZPascal/bosh-libvirt-cpi-release feat/qemu-persistent-disks (on top of PR #32):
+  # setup-bosh-director action + QEMU persistent disk hot-plug.
+  CPI_REF: cd96f2ace8aeae54112e825776d1c91adad00ec3
 
 jobs:
   x86_64-bosh:
@@ -72,7 +73,6 @@ jobs:
         timeout 7200 bosh -n deploy templates/postgres.yml \
           -o templates/operations/add_static_ips.yml \
           -o templates/operations/set_properties.yml \
-          -o ci/e2e/ops/no-persistent-disk.yml \
           -v "postgres_host_or_ip=${POSTGRES_IP}" \
           --vars-store /tmp/postgres-vars.yml
         bosh instances --ps

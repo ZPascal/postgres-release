@@ -1,6 +1,0 @@
-# The libvirt CPI's QEMU backend does not attach persistent disks yet: attach_disk
-# hands the agent the disk image's host path, which doesn't exist inside the VM.
-# Without a persistent disk the postgres job keeps its data in /var/vcap/store on
-# the root disk, which the CPI pre-creates. Drop this once the CPI supports it.
-- type: remove
-  path: /instance_groups/name=postgres/persistent_disk_type
