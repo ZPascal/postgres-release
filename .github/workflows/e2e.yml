@@ -294,7 +294,6 @@ jobs:
         echo "ICU collations: ${icu}"
         [ "$icu" -gt 0 ] || { echo "no ICU collations - postgres built without ICU?"; exit 1; }
         [ "$(q "SELECT 'a' < 'B' COLLATE \"de-DE-x-icu\";")" = t ] || { echo "ICU collation comparison failed"; exit 1; }
-        q 'SHOW data_directory;'
         echo "postgres query checks passed"
 
     - name: Collect diagnostics
