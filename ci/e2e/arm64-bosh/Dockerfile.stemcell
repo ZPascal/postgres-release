@@ -4,8 +4,10 @@ ARG BASE
 FROM ${BASE}
 
 # psql (postgres-1x packages, configured with readline) links libreadline.
+# postgres-common's log timestamping (utils.sh) uses Perl's Time::HiRes, which
+# perl-base lacks; official stemcells ship full perl.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libreadline8t64 && \
+    apt-get install -y --no-install-recommends libreadline8t64 perl && \
     rm -rf /var/lib/apt/lists/*
 
 # The Docker CPI attaches a persistent disk as a bind-mounted directory
