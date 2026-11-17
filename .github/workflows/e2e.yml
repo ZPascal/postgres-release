@@ -17,8 +17,9 @@ permissions:
 
 env:
   BOSH_CLI_VERSION: v7.11.2
-  # ZPascal/bosh-libvirt-cpi-release feat/qemu-persistent-disks (on top of PR #32):
-  # setup-bosh-director action + QEMU persistent disk hot-plug.
+  # ZPascal/bosh-libvirt-cpi-release feat/aarch64-guests (PR #36, on top of the
+  # persistent disk PR #35): setup-bosh-director action, QEMU persistent disk
+  # hot-plug, aarch64 guest support.
   CPI_REF: 5e517b5c6ee4868f3535161f08e557e661ab36dc
 
 jobs:
