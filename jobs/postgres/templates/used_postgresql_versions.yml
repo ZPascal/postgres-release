@@ -2,10 +2,10 @@ postgresql:
   default: 18
   major_version:
     15:
-      minor_version: "15.18"
+      minor_version: "15.20"
     16:
-      minor_version: "16.14"
+      minor_version: "16.16"
     17:
-      minor_version: "17.10"
+      minor_version: "17.12"
     18:
-      minor_version: "18.4"
+      minor_version: "18.7"

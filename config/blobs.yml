@@ -1,20 +1,24 @@
-postgres/postgresql-15.18.tar.gz:
-  size: 30728818
-  object_id: 6a42f379-15a7-4462-45c3-dc489a654e69
-  sha: sha256:d32a533516edc688ebbb96ae221b605be2712edd94d7428b42a4af5644250943
-postgres/postgresql-16.14.tar.gz:
-  size: 33046588
-  object_id: 27d12799-1bf8-4803-5aa4-0d3ee2a9e823
-  sha: sha256:ca18d43510bbb09a271383e1aa705b05b76bc8e9400f9857178ba8ec54cf461a
-postgres/postgresql-17.10.tar.gz:
-  size: 28303995
-  object_id: c27edbac-e78e-4e01-649e-81233679de55
-  sha: sha256:e4b43025f32ea3d271be64365d284c8462cffd41d80db0c3df6fc62417a2d9dc
-postgres/postgresql-18.4.tar.gz:
-  size: 29477735
-  object_id: c8ba6a21-f9a6-4a25-6278-7ed3549a4c63
-  sha: sha256:450aa8f2da06c46f8221916e82ae06b04fb1040f8f00643dbf8b7d663caac0b9
-yq/postgres-yq-4.53.3:
-  size: 13750434
-  object_id: eddb5b6c-12ad-4a66-44b5-3fab4524c934
-  sha: sha256:fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4
+icu/icu4c-79.1-sources.tgz:
+  size: 28162455
+  object_id: fd5f7d50-1efa-474d-665b-7720c2011db0
+  sha: sha256:06fa63ecb521048f8082f12ad988f6b678d90cbd88aafce24cbc94902b191d99
+postgres/postgresql-15.20.tar.gz:
+  size: 31561924
+  object_id: 9bc3db33-f6f0-4001-51e2-31a084f643cf
+  sha: sha256:9f47c08bb886abf66cdaf3ec871252793cf35083a6b0150e63776c5eb0ca005a
+postgres/postgresql-16.16.tar.gz:
+  size: 33764287
+  object_id: 300a70f8-19aa-4759-76ea-b2e780d70a0d
+  sha: sha256:3e930f3366f675ab26e873d16201201f8e9b6d9bc13686e4465380271145ea2d
+postgres/postgresql-17.12.tar.gz:
+  size: 29118869
+  object_id: 8c638166-bdd4-476a-669c-7dc6cf49da61
+  sha: sha256:b46f61048797e9cf1728dd4ac459831f5126c4745581f729500541c86e59a8ac
+postgres/postgresql-18.7.tar.gz:
+  size: 30399584
+  object_id: 4c06b333-96ce-461e-5c25-1cfd667896e1
+  sha: sha256:19c2dc7d8520e10532d082b43c36c4d2dcc6cd9e40506c6f598e7338f84bbde7
+yq/postgres-yq-4.54.3:
+  size: 15499424
+  object_id: 5fa3e3c3-1e14-4951-498d-63b631422cc8
+  sha: sha256:129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973

@@ -1,0 +1,321 @@
+name: E2E
+
+# x86_64: deploys this release through a real BOSH director on the libvirt CPI
+#         (QEMU/KVM on the runner) and queries Postgres.
+# arm64:  compiles the release's packages natively with their own packaging
+#         scripts and queries the resulting Postgres, per major version; and
+#         deploys the release through a BOSH director on ARM64 with the Docker
+#         CPI, using the director and stemcell recipe from
+#         aws-samples/sample-cloud-foundry-graviton (no official ARM64 stemcell
+#         yet, and GitHub's ARM runners have no /dev/kvm for the libvirt CPI).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BOSH_CLI_VERSION: v7.11.2
+  # ZPascal/bosh-libvirt-cpi-release feat/aarch64-guests (PR #36, on top of the
+  # persistent disk PR #35): setup-bosh-director action, QEMU persistent disk
+  # hot-plug, aarch64 guest support.
+  CPI_REF: 5e517b5c6ee4868f3535161f08e557e661ab36dc
+  # aws-samples/sample-cloud-foundry-graviton (MIT-0): ARM64 BOSH director
+  # (Docker CPI) and stemcell recipe.
+  GRAVITON_SAMPLE_REF: 1e53fa1872dab4be8b5029b5d948dba4c078978f
+
+jobs:
+  x86_64-bosh:
+    name: x86_64 BOSH deploy (libvirt CPI, QEMU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      BOSH_ENVIRONMENT: qemu-ci
+      BOSH_CLIENT: admin
+      BOSH_CLIENT_SECRET: admin-password
+      BOSH_DEPLOYMENT: postgres
+      POSTGRES_IP: 192.168.122.21
+    steps:
+    # The CPI action expects its repository at the workspace root.
+    - name: Check out libvirt CPI release
+      uses: actions/checkout@v6
+      with:
+        repository: ZPascal/bosh-libvirt-cpi-release
+        ref: ${{ env.CPI_REF }}
+
+    - name: Check out postgres-release
+      uses: actions/checkout@v6
+      with:
+        path: postgres-release
+
+    - name: Set up BOSH director
+      uses: ./.github/actions/setup-bosh-director
+      with:
+        backend: qemu
+        bosh_cli_version: ${{ env.BOSH_CLI_VERSION }}
+
+    - name: Update cloud config and upload stemcell
+      working-directory: postgres-release
+      run: |
+        bosh -n update-cloud-config ci/e2e/cloud-config-qemu.yml -v "kernel_path=${KERNEL_PATH}"
+        timeout 600 bosh upload-stemcell /tmp/bosh-stemcell.tgz
+
+    - name: Create and upload postgres release
+      working-directory: postgres-release
+      run: |
+        ci/e2e/prepare-yq-blobs.sh
+        bosh create-release --force --tarball /tmp/postgres-release.tgz
+        # The director's blobstore can come up after its API (same wait as the CPI's e2e).
+        for _ in $(seq 1 80); do nc -z "${DIRECTOR_IP}" 25250 && break; sleep 3; done
+        nc -z "${DIRECTOR_IP}" 25250 || { echo "blobstore port 25250 never opened"; exit 1; }
+        timeout 600 bosh upload-release /tmp/postgres-release.tgz
+
+    - name: Deploy postgres
+      working-directory: postgres-release
+      run: |
+        timeout 7200 bosh -n deploy templates/postgres.yml \
+          -o templates/operations/add_static_ips.yml \
+          -o templates/operations/set_properties.yml \
+          -v "postgres_host_or_ip=${POSTGRES_IP}" \
+          --vars-store /tmp/postgres-vars.yml
+        bosh instances --ps
+
+    - name: Query postgres
+      working-directory: postgres-release
+      run: |
+        sudo apt-get install -y postgresql-client
+        expected_major=$(yq '.postgresql.default' jobs/postgres/templates/used_postgresql_versions.yml)
+        PGPASSWORD=$(bosh int /tmp/postgres-vars.yml --path /pgadmin_database_password)
+        export PGPASSWORD PGCONNECT_TIMEOUT=10
+        q() { psql "host=${POSTGRES_IP} port=5524 user=pgadmin dbname=sandbox" -v ON_ERROR_STOP=1 -Atc "$1"; }
+
+        version=$(q 'SELECT version();')
+        echo "$version"
+        [[ "$version" == "PostgreSQL ${expected_major}."* ]] || { echo "expected PostgreSQL ${expected_major}.x"; exit 1; }
+
+        icu=$(q "SELECT count(*) FROM pg_collation WHERE collprovider = 'i';")
+        echo "ICU collations: ${icu}"
+        [ "$icu" -gt 0 ] || { echo "no ICU collations - postgres built without ICU?"; exit 1; }
+        [ "$(q "SELECT 'a' < 'B' COLLATE \"de-DE-x-icu\";")" = t ] || { echo "ICU collation comparison failed"; exit 1; }
+        echo "postgres query checks passed"
+
+    - name: Collect diagnostics
+      if: failure()
+      run: |
+        mkdir -p /tmp/e2e-diagnostics
+        cp /tmp/bosh-create-env.log /tmp/e2e-diagnostics/ 2>/dev/null || true
+        bosh tasks --recent=10 --all > /tmp/e2e-diagnostics/tasks.txt 2>&1 || true
+        last_failed=$(bosh tasks --recent=10 --all --json 2>/dev/null \
+          | yq -p json '[.Tables[0].Rows[] | select(.state != "done")][0].id' 2>/dev/null || true)
+        if [ -n "$last_failed" ] && [ "$last_failed" != null ]; then
+          bosh task "$last_failed" --debug > /tmp/e2e-diagnostics/task-debug.txt 2>&1 || true
+        fi
+        bosh logs --dir /tmp/e2e-diagnostics > /dev/null 2>&1 || true
+        bash .github/scripts/e2e-debug-qemu.sh deploy > /tmp/e2e-diagnostics/cpi-debug.txt 2>&1 || true
+
+    - name: Upload diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-x86_64-diagnostics
+        path: /tmp/e2e-diagnostics
+        if-no-files-found: ignore
+
+    - name: Delete deployment
+      if: always()
+      run: timeout 1200 bosh -n delete-deployment --force || true
+
+    - name: Delete director
+      if: always()
+      run: |
+        sudo bosh delete-env manifests/qemu-cpi.yml \
+          -o manifests/ops/qemu-local.yml \
+          -o manifests/local-release.yml \
+          -o manifests/ops/local-store-dir.yml \
+          -o manifests/ops/qemu-mac.yml \
+          -o manifests/ops/qemu-kernel-boot.yml \
+          -o manifests/ops/qemu-director-ssh.yml \
+          --state /tmp/bosh-state.json \
+          --vars-store /tmp/bosh-vars.yml \
+          -v director_name="${DIRECTOR_NAME}" \
+          -v internal_ip="${DIRECTOR_IP}" \
+          -v stemcell_url=file:///tmp/bosh-stemcell.tgz \
+          -v "kernel_path=${KERNEL_PATH}" \
+          -v libvirt_host=192.168.122.1 \
+          -v libvirt_username=root \
+          --var-file libvirt_private_key=/tmp/bosh-libvirt-ssh-key \
+          -v "libvirt_host_key=${LIBVIRT_HOST_KEY}" || true
+
+  arm64-packages:
+    name: arm64 packages (PostgreSQL ${{ matrix.major }})
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        major: [15, 16, 17, 18]
+    env:
+      PACKAGES_DIR: /tmp/packages
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install build dependencies and BOSH CLI
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config libssl-dev libreadline-dev zlib1g-dev bison flex file
+        curl -fsSL "https://github.com/cloudfoundry/bosh-cli/releases/download/${BOSH_CLI_VERSION}/bosh-cli-${BOSH_CLI_VERSION#v}-linux-arm64" \
+          -o "${RUNNER_TEMP}/bosh"
+        sudo install -m 0755 "${RUNNER_TEMP}/bosh" /usr/local/bin/bosh
+        bosh --version
+
+    - name: Create release tarball
+      run: |
+        ci/e2e/prepare-yq-blobs.sh
+        bosh create-release --force --tarball /tmp/postgres-release.tgz
+
+    - name: Compile packages
+      run: ci/e2e/compile-packages.sh /tmp/postgres-release.tgz postgres-libicu "postgres-${{ matrix.major }}" postgres-yq-4
+
+    - name: Check binaries are aarch64
+      run: |
+        for b in "${PACKAGES_DIR}/postgres-${{ matrix.major }}/bin/postgres" "${PACKAGES_DIR}/postgres-yq-4/bin/yq"; do
+          file -L "$b"
+          file -L "$b" | grep -q 'ARM aarch64' || { echo "$b is not an aarch64 binary"; exit 1; }
+        done
+        "${PACKAGES_DIR}/postgres-yq-4/bin/yq" --version
+
+    - name: Start and query postgres
+      run: EXPECT_ARCH=aarch64 ci/e2e/smoke-postgres.sh "${{ matrix.major }}"
+
+  arm64-bosh:
+    name: arm64 BOSH deploy (Docker CPI)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    env:
+      PACKAGES_DIR: /var/vcap/packages
+      STEMCELL_VERSION: 1.0-arm64
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Check out the ARM64 BOSH sample
+      uses: actions/checkout@v6
+      with:
+        repository: aws-samples/sample-cloud-foundry-graviton
+        ref: ${{ env.GRAVITON_SAMPLE_REF }}
+        path: graviton
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: stable
+        cache: false
+
+    - name: Install build dependencies and BOSH CLI
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config libssl-dev libreadline-dev zlib1g-dev bison flex file postgresql-client
+        curl -fsSL "https://github.com/cloudfoundry/bosh-cli/releases/download/${BOSH_CLI_VERSION}/bosh-cli-${BOSH_CLI_VERSION#v}-linux-arm64" \
+          -o "${RUNNER_TEMP}/bosh"
+        sudo install -m 0755 "${RUNNER_TEMP}/bosh" /usr/local/bin/bosh
+        bosh --version
+
+    - name: Build director and stemcell images
+      run: |
+        graviton/scripts/build-binaries.sh
+        docker build --platform linux/arm64 -t bosh-director-arm64:latest -f graviton/Dockerfile.director graviton
+        ci/e2e/arm64-bosh/build-stemcell.sh graviton /tmp/stemcell.tgz
+
+    - name: Start director
+      run: |
+        docker network create bosh-default
+        docker run -d --name bosh-director --privileged \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          --network bosh-default bosh-director-arm64:latest
+        . ci/e2e/arm64-bosh/director.sh
+        director_wait_api 600
+
+    - name: Compile packages and build compiled release
+      run: |
+        sudo mkdir -p "$PACKAGES_DIR" && sudo chown "$(id -u):$(id -g)" "$PACKAGES_DIR"
+        ci/e2e/prepare-yq-blobs.sh
+        bosh create-release --force --tarball /tmp/postgres-release.tgz
+        # Dependencies first; compiled under /var/vcap/packages so install paths match the VM.
+        ci/e2e/compile-packages.sh /tmp/postgres-release.tgz \
+          postgres-libicu postgres-common postgres-15 postgres-16 postgres-17 postgres-18 postgres-yq-4
+        # mikefarah yq for the steps below; the runner image may not ship it.
+        command -v yq >/dev/null || sudo ln -s "${PACKAGES_DIR}/postgres-yq-4/bin/yq" /usr/local/bin/yq
+        ci/e2e/arm64-bosh/compiled-release.sh /tmp/postgres-release.tgz "$PACKAGES_DIR" \
+          "ubuntu-noble/${STEMCELL_VERSION}" /tmp/postgres-release-compiled.tgz
+
+    - name: Upload stemcell, release and cloud config
+      run: |
+        . ci/e2e/arm64-bosh/director.sh
+        director_upload stemcells /tmp/stemcell.tgz 900
+        director_upload releases /tmp/postgres-release-compiled.tgz 900
+        jq -Rs '{type: "cloud", name: "default", content: .}' ci/e2e/arm64-bosh/cloud-config.yml \
+          | director_curl -f -X POST -H "Content-Type: application/json" -d @- "${DIRECTOR_URL}/configs"
+        echo
+
+    - name: Deploy postgres
+      run: |
+        . ci/e2e/arm64-bosh/director.sh
+        # No config server on this director: generate the variables here.
+        bosh int templates/postgres.yml -o templates/operations/set_properties.yml \
+          --vars-store /tmp/postgres-vars.yml | yq 'del(.variables)' > /tmp/postgres-manifest.yml
+        docker cp /tmp/postgres-manifest.yml bosh-director:/tmp/postgres-manifest.yml
+        id=$(director_task -X POST -H "Content-Type: text/yaml" \
+          --data-binary @/tmp/postgres-manifest.yml "${DIRECTOR_URL}/deployments")
+        director_wait_task "$id" 3600
+
+    - name: Query postgres
+      run: |
+        vm=$(docker ps --filter network=bosh-default --format '{{.Names}}' | grep '^c-' | head -1)
+        [ -n "$vm" ] || { echo "no VM container found"; exit 1; }
+        echo "VM container: ${vm}"
+        docker exec "$vm" uname -m
+        [ "$(docker exec "$vm" uname -m)" = aarch64 ] || { echo "VM is not aarch64"; exit 1; }
+        docker exec "$vm" monit -c /var/vcap/bosh/etc/monitrc summary
+        docker exec "$vm" sh -c 'findmnt -T /var/vcap/store; ls /var/vcap/store/postgres'
+        vm_ip=$(docker inspect "$vm" --format '{{with index .NetworkSettings.Networks "bosh-default"}}{{.IPAddress}}{{end}}')
+
+        expected_major=$(yq '.postgresql.default' jobs/postgres/templates/used_postgresql_versions.yml)
+        PGPASSWORD=$(bosh int /tmp/postgres-vars.yml --path /pgadmin_database_password)
+        export PGPASSWORD PGCONNECT_TIMEOUT=10
+        q() { psql "host=${vm_ip} port=5524 user=pgadmin dbname=sandbox" -v ON_ERROR_STOP=1 -Atc "$1"; }
+
+        version=$(q 'SELECT version();')
+        echo "$version"
+        [[ "$version" == "PostgreSQL ${expected_major}."*" on aarch64-"* ]] || { echo "expected PostgreSQL ${expected_major}.x on aarch64"; exit 1; }
+
+        icu=$(q "SELECT count(*) FROM pg_collation WHERE collprovider = 'i';")
+        echo "ICU collations: ${icu}"
+        [ "$icu" -gt 0 ] || { echo "no ICU collations - postgres built without ICU?"; exit 1; }
+        [ "$(q "SELECT 'a' < 'B' COLLATE \"de-DE-x-icu\";")" = t ] || { echo "ICU collation comparison failed"; exit 1; }
+        echo "postgres query checks passed"
+
+    - name: Collect diagnostics
+      if: failure()
+      run: |
+        . ci/e2e/arm64-bosh/director.sh
+        d=/tmp/e2e-diagnostics; mkdir -p "$d"
+        docker logs bosh-director > "$d/director-container.log" 2>&1 || true
+        director_curl "${DIRECTOR_URL}/tasks?verbose=2&limit=10" > "$d/tasks.json" 2>&1 || true
+        for id in $(jq -r '.[] | select(.state != "done") | .id' "$d/tasks.json" 2>/dev/null); do
+          director_curl "${DIRECTOR_URL}/tasks/${id}/output?type=debug" > "$d/task-${id}-debug.log" 2>&1 || true
+        done
+        for vm in $(docker ps -a --filter network=bosh-default --format '{{.Names}}' | grep '^c-'); do
+          docker inspect "$vm" > "$d/${vm}-inspect.json" 2>&1 || true
+          docker exec "$vm" sh -c 'monit -c /var/vcap/bosh/etc/monitrc summary; tail -n 200 /var/vcap/bosh/log/current /var/vcap/sys/log/postgres/*' \
+            > "$d/${vm}.log" 2>&1 || true
+        done
+
+    - name: Upload diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-arm64-bosh-diagnostics
+        path: /tmp/e2e-diagnostics
+        if-no-files-found: ignore

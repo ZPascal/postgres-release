@@ -1,0 +1,46 @@
+# Overlay on the ARM64 stemcell image from aws-samples/sample-cloud-foundry-graviton
+# (Dockerfile.stemcell there), with what this release's deployment needs on top.
+ARG BASE
+FROM ${BASE}
+
+# psql (postgres-1x packages, configured with readline) links libreadline.
+# postgres-common's log timestamping (utils.sh) uses Perl's Time::HiRes, which
+# perl-base lacks; official stemcells ship full perl.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libreadline8t64 perl && \
+    rm -rf /var/lib/apt/lists/*
+
+# BOSH's monit. The sample builds monit 5.25.3, which waits for a start program
+# to exit; BOSH jobs expect monit 5.2.5 (what official noble stemcells ship),
+# which starts it and then watches the pidfile. pg_janitor_ctl start execs into
+# the janitor, so under 5.25.3 it stayed "Initializing" until monit killed it.
+# Same tarball, configure flags and monitrc as bosh-linux-stemcell-builder's
+# ubuntu-noble bosh_monit stage; current config.guess/config.sub for aarch64.
+ARG STEMCELL_BUILDER_REF=3abb146769b52b3c01d35df869f283b23dfa331d
+ARG MONIT_SHA256=3c2496e9f653ff8a46b75b61126a86cb3861ad35e4eeb7379d64a0fc55c1fd8d
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc make libc6-dev zlib1g-dev bison flex autotools-dev && \
+    base="https://raw.githubusercontent.com/cloudfoundry/bosh-linux-stemcell-builder/${STEMCELL_BUILDER_REF}/stemcell_builder/stages/bosh_monit/assets" && \
+    cd /tmp && curl -fsSL -o monit-5.2.5.tar.gz "${base}/monit-5.2.5.tar.gz" && \
+    echo "${MONIT_SHA256}  monit-5.2.5.tar.gz" | sha256sum -c - && \
+    tar xzf monit-5.2.5.tar.gz && cd monit-5.2.5 && \
+    cp /usr/share/misc/config.guess /usr/share/misc/config.sub . && \
+    ./configure --prefix=/var/vcap/bosh --without-ssl CFLAGS="-fcommon" && \
+    make -j"$(nproc)" && make install && \
+    ln -sf /var/vcap/bosh/bin/monit /usr/bin/monit && \
+    /usr/bin/monit -V && \
+    curl -fsSL -o /var/vcap/bosh/etc/monitrc "${base}/monitrc" && \
+    chmod 0700 /var/vcap/bosh/etc/monitrc && \
+    mkdir -p /var/vcap/monit/job && touch /var/vcap/monit/empty.monitrc && \
+    echo 'vcap:random-password' > /var/vcap/monit/monit.user && \
+    cd / && rm -rf /tmp/monit-5.2.5* && \
+    apt-get purge -y gcc make bison flex autotools-dev && apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# The Docker CPI attaches a persistent disk as a bind-mounted directory
+# (/warden-cpi-dev/<disk-id>), not a block device. Like the official warden
+# stemcells, tell the agent to bind-mount it instead of partitioning/formatting.
+RUN jq '.Platform.Linux += {"UsePreformattedPersistentDisk": true, "BindMountPersistentDisk": true}' \
+      /var/vcap/bosh/etc/agent.json > /tmp/agent.json && \
+    mv /tmp/agent.json /var/vcap/bosh/etc/agent.json && \
+    jq -e '.Platform.Linux.BindMountPersistentDisk' /var/vcap/bosh/etc/agent.json
