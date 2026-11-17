@@ -19,7 +19,7 @@ env:
   BOSH_CLI_VERSION: v7.11.2
   # ZPascal/bosh-libvirt-cpi-release feat/qemu-persistent-disks (on top of PR #32):
   # setup-bosh-director action + QEMU persistent disk hot-plug.
-  CPI_REF: 487b87c94a08cedec860445c77293023112c8a83
+  CPI_REF: 0eab5e3755312f1a0b8bfc780f3b6ffb8bf15e27
 
 jobs:
   x86_64-bosh:
