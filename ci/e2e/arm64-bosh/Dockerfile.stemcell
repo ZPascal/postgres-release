@@ -1,0 +1,17 @@
+# Overlay on the ARM64 stemcell image from aws-samples/sample-cloud-foundry-graviton
+# (Dockerfile.stemcell there), with what this release's deployment needs on top.
+ARG BASE
+FROM ${BASE}
+
+# psql (postgres-1x packages, configured with readline) links libreadline.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libreadline8t64 && \
+    rm -rf /var/lib/apt/lists/*
+
+# The Docker CPI attaches a persistent disk as a bind-mounted directory
+# (/warden-cpi-dev/<disk-id>), not a block device. Like the official warden
+# stemcells, tell the agent to bind-mount it instead of partitioning/formatting.
+RUN jq '.Platform.Linux += {"UsePreformattedPersistentDisk": true, "BindMountPersistentDisk": true}' \
+      /var/vcap/bosh/etc/agent.json > /tmp/agent.json && \
+    mv /tmp/agent.json /var/vcap/bosh/etc/agent.json && \
+    jq -e '.Platform.Linux.BindMountPersistentDisk' /var/vcap/bosh/etc/agent.json

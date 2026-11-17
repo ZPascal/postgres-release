@@ -1,0 +1,32 @@
+---
+# Cloud config for the ARM64 e2e director (Docker CPI): VMs are containers on
+# the `bosh-default` Docker network, persistent disks are Docker volumes.
+azs:
+- name: z1
+  cloud_properties: {}
+
+vm_types:
+- name: small
+  cloud_properties: {}
+- name: compilation
+  cloud_properties: {}
+
+disk_types:
+- name: disk_10G
+  disk_size: 10240
+  cloud_properties: {}
+
+networks:
+- name: default
+  type: dynamic
+  subnets:
+  - az: z1
+    cloud_properties:
+      name: bosh-default
+
+compilation:
+  workers: 1
+  az: z1
+  reuse_compilation_vms: true
+  vm_type: compilation
+  network: default
